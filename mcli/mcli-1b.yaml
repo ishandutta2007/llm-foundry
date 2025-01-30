@@ -1,10 +1,10 @@
 integrations:
 - integration_type: git_repo
   git_repo: mosaicml/llm-foundry
-  git_branch: v0.3.0
-  # git_commit: # OR use your commit hash
-  pip_install: -e .[gpu]
-  ssh_clone: false # Should be true if using a private repo
+  git_branch: v0.16.0
+  # git_commit:  # OR use your commit hash
+  pip_install: .[gpu]
+  ssh_clone: false  # Should be true if using a private repo
 
 # We are fetching, converting, and training on the 'val' split
 # as it is small and quick to get going for this demo.
@@ -13,7 +13,7 @@ integrations:
 command: |
   cd llm-foundry/scripts
   python data_prep/convert_dataset_hf.py \
-    --dataset c4 --data_subset en \
+    --dataset allenai/c4 --data_subset en \
     --out_root ./my-copy-c4 --splits train_small val_small \
     --concat_tokens 2048 --tokenizer EleutherAI/gpt-neox-20b --eos_text '<|endoftext|>'
   composer train/train.py train/yamls/pretrain/mpt-1b.yaml \
@@ -21,7 +21,7 @@ command: |
     eval_loader.dataset.split=val_small \
     max_duration=100ba \
     eval_interval=0
-image: mosaicml/pytorch:1.13.1_cu117-python3.10-ubuntu20.04
+image: mosaicml/llm-foundry:2.5.1_cu124-latest
 name: mpt-1b-gpus-8
 
 compute:

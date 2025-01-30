@@ -1,17 +1,18 @@
 # Copyright 2022 MosaicML LLM Foundry authors
 # SPDX-License-Identifier: Apache-2.0
 import itertools
-import os
 import random
 import time
 import warnings
 from argparse import ArgumentParser, ArgumentTypeError, Namespace
 from contextlib import nullcontext
-from typing import Dict, Union
+from typing import Union
 
 import numpy as np
 import torch
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+
+from llmfoundry.utils import prompt_files as utils
 
 
 def get_dtype(dtype: str):
@@ -52,7 +53,8 @@ def str_or_bool(v: Union[str, bool]):
 def parse_args() -> Namespace:
     """Parse commandline arguments."""
     parser = ArgumentParser(
-        description='Load a HF CausalLM Model and use it to generate text.')
+        description='Load a HF CausalLM Model and use it to generate text.',
+    )
     parser.add_argument('-n', '--name_or_path', type=str, required=True)
     parser.add_argument(
         '-p',
@@ -62,9 +64,15 @@ def parse_args() -> Namespace:
             'My name is',
             'This is an explanation of deep learning to a five year old. Deep learning is',
         ],
-        help='Generation prompts. Use syntax "file::/path/to/prompt.txt" to load a ' +\
-             'prompt contained in a txt file.'
+        help='List of generation prompts or list of delimited files. Use syntax ' +\
+             '"file::/path/to/prompt.txt" to load a prompt(s) contained in a txt file.',
         )
+    parser.add_argument(
+        '--prompt-delimiter',
+        default=None,
+        help=
+        'Prompt delimiter for txt files. By default, a file is a single prompt',
+    )
     parser.add_argument('--max_seq_len', type=int, default=None)
     parser.add_argument('--max_new_tokens', type=int, default=100)
     parser.add_argument('--max_batch_size', type=int, default=None)
@@ -73,69 +81,74 @@ def parse_args() -> Namespace:
     parser.add_argument('--temperature', type=float, nargs='+', default=[1.0])
     parser.add_argument('--top_k', type=int, nargs='+', default=[50])
     parser.add_argument('--top_p', type=float, nargs='+', default=[1.0])
-    parser.add_argument('--repetition_penalty',
-                        type=float,
-                        nargs='+',
-                        default=[1.0])
-    parser.add_argument('--no_repeat_ngram_size',
-                        type=int,
-                        nargs='+',
-                        default=[0])
+    parser.add_argument(
+        '--repetition_penalty',
+        type=float,
+        nargs='+',
+        default=[1.0],
+    )
+    parser.add_argument(
+        '--no_repeat_ngram_size',
+        type=int,
+        nargs='+',
+        default=[0],
+    )
     #####
     parser.add_argument('--seed', type=int, nargs='+', default=[42])
-    parser.add_argument('--do_sample',
-                        type=str2bool,
-                        nargs='?',
-                        const=True,
-                        default=True)
-    parser.add_argument('--use_cache',
-                        type=str2bool,
-                        nargs='?',
-                        const=True,
-                        default=True)
+    parser.add_argument(
+        '--do_sample',
+        type=str2bool,
+        nargs='?',
+        const=True,
+        default=True,
+    )
+    parser.add_argument(
+        '--use_cache',
+        type=str2bool,
+        nargs='?',
+        const=True,
+        default=True,
+    )
     parser.add_argument('--eos_token_id', type=int, default=None)
     parser.add_argument('--pad_token_id', type=int, default=None)
-    parser.add_argument('--model_dtype',
-                        type=str,
-                        choices=['fp32', 'fp16', 'bf16'],
-                        default=None)
-    parser.add_argument('--autocast_dtype',
-                        type=str,
-                        choices=['fp32', 'fp16', 'bf16'],
-                        default=None)
-    parser.add_argument('--warmup',
-                        type=str2bool,
-                        nargs='?',
-                        const=True,
-                        default=True)
-    parser.add_argument('--trust_remote_code',
-                        type=str2bool,
-                        nargs='?',
-                        const=True,
-                        default=True)
-    parser.add_argument('--use_auth_token',
-                        type=str_or_bool,
-                        nargs='?',
-                        const=True,
-                        default=None)
+    parser.add_argument(
+        '--model_dtype',
+        type=str,
+        choices=['fp32', 'fp16', 'bf16'],
+        default=None,
+    )
+    parser.add_argument(
+        '--autocast_dtype',
+        type=str,
+        choices=['fp32', 'fp16', 'bf16'],
+        default=None,
+    )
+    parser.add_argument(
+        '--warmup',
+        type=str2bool,
+        nargs='?',
+        const=True,
+        default=True,
+    )
+    parser.add_argument(
+        '--trust_remote_code',
+        type=str2bool,
+        nargs='?',
+        const=True,
+        default=True,
+    )
+    parser.add_argument(
+        '--use_auth_token',
+        type=str_or_bool,
+        nargs='?',
+        const=True,
+        default=None,
+    )
     parser.add_argument('--revision', type=str, default=None)
     parser.add_argument('--device', type=str, default=None)
     parser.add_argument('--device_map', type=str, default=None)
     parser.add_argument('--attn_impl', type=str, default=None)
     return parser.parse_args()
-
-
-def load_prompt_string_from_file(prompt_path_str: str):
-    if not prompt_path_str.startswith('file::'):
-        raise ValueError('prompt_path_str must start with "file::".')
-    _, prompt_file_path = prompt_path_str.split('file::', maxsplit=1)
-    prompt_file_path = os.path.expanduser(prompt_file_path)
-    if not os.path.isfile(prompt_file_path):
-        raise FileNotFoundError(
-            f'{prompt_file_path=} does not match any existing files.')
-    with open(prompt_file_path, 'r') as f:
-        prompt_string = ''.join(f.readlines())
-    return prompt_string
 
 
 def maybe_synchronize():
@@ -163,11 +176,7 @@ def main(args: Namespace) -> None:
     print(f'Using {model_dtype=}')
 
     # Load prompts
-    prompt_strings = []
-    for prompt in args.prompts:
-        if prompt.startswith('file::'):
-            prompt = load_prompt_string_from_file(prompt)
-        prompt_strings.append(prompt)
+    prompt_strings = utils.load_prompts(args.prompts, args.prompt_delimiter)
 
     # Grab config first
     print(f'Loading HF Config...')
@@ -177,8 +186,10 @@ def main(args: Namespace) -> None:
         'revision': args.revision,
     }
     try:
-        config = AutoConfig.from_pretrained(args.name_or_path,
-                                            **from_pretrained_kwargs)
+        config = AutoConfig.from_pretrained(
+            args.name_or_path,
+            **from_pretrained_kwargs,
+        )
         if hasattr(config, 'init_device') and device is not None:
             config.init_device = device
         if args.attn_impl is not None and hasattr(config, 'attn_config'):
@@ -189,17 +200,19 @@ def main(args: Namespace) -> None:
     except Exception as e:
         raise RuntimeError(
             'If you are having auth problems, try logging in via `huggingface-cli login` ' +\
-            'or by setting the environment variable `export HUGGING_FACE_HUB_TOKEN=... ' +\
-            'using your access token from https://huggingface.co/settings/tokens.'
+            'or by setting the environment variable `export HF_TOKEN=... ' +\
+            'using your access token from https://huggingface.co/settings/tokens.',
         ) from e
 
     # Build tokenizer
     print('\nLoading HF tokenizer...')
-    tokenizer = AutoTokenizer.from_pretrained(args.name_or_path,
-                                              **from_pretrained_kwargs)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.name_or_path,
+        **from_pretrained_kwargs,
+    )
     if tokenizer.pad_token_id is None:
         warnings.warn(
-            'pad_token_id is not set for the tokenizer. Using eos_token_id as pad_token_id.'
+            'pad_token_id is not set for the tokenizer. Using eos_token_id as pad_token_id.',
         )
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = 'left'
@@ -207,11 +220,13 @@ def main(args: Namespace) -> None:
     # Load HF Model
     print(f'Loading HF model with dtype={model_dtype}...')
     try:
-        model = AutoModelForCausalLM.from_pretrained(args.name_or_path,
-                                                     config=config,
-                                                     torch_dtype=model_dtype,
-                                                     device_map=device_map,
-                                                     **from_pretrained_kwargs)
+        model = AutoModelForCausalLM.from_pretrained(
+            args.name_or_path,
+            config=config,
+            torch_dtype=model_dtype,
+            device_map=device_map,
+            **from_pretrained_kwargs,
+        )
         model.eval()
         print(f'n_params={sum(p.numel() for p in model.parameters())}')
         if device is not None:
@@ -221,10 +236,8 @@ def main(args: Namespace) -> None:
         raise RuntimeError(
             'Unable to load HF model. ' +
             'If you are having auth problems, try logging in via `huggingface-cli login` '
-            +
-            'or by setting the environment variable `export HUGGING_FACE_HUB_TOKEN=... '
-            +
-            'using your access token from https://huggingface.co/settings/tokens.'
+            + 'or by setting the environment variable `export HF_TOKEN=... ' +
+            'using your access token from https://huggingface.co/settings/tokens.',
         ) from e
 
     # Autocast
@@ -239,8 +252,13 @@ def main(args: Namespace) -> None:
     done_warmup = False
 
     for temp, topp, topk, repp, nrnz, seed in itertools.product(
-            args.temperature, args.top_p, args.top_k, args.repetition_penalty,
-            args.no_repeat_ngram_size, args.seed):
+        args.temperature,
+        args.top_p,
+        args.top_k,
+        args.repetition_penalty,
+        args.no_repeat_ngram_size,
+        args.seed,
+    ):
 
         # Seed randomness
         random.seed(seed)
@@ -262,7 +280,7 @@ def main(args: Namespace) -> None:
         print(f'\nGenerate kwargs:\n{generate_kwargs}')
 
         # Generate function with correct context managers
-        def _generate(encoded_inp: Dict[str, torch.Tensor]):
+        def _generate(encoded_inp: dict[str, torch.Tensor]):
             with torch.no_grad():
                 with autocast_context:
                     return model.generate(
@@ -295,7 +313,8 @@ def main(args: Namespace) -> None:
             input_tokens = torch.sum(
                 encoded_inp['input_ids'] !=
                 tokenizer.pad_token_id,  # type: ignore
-                axis=1).numpy(force=True)
+                axis=1,
+            ).numpy(force=True)
 
             # Warmup
             if args.warmup and (not done_warmup):
@@ -312,21 +331,28 @@ def main(args: Namespace) -> None:
             gen_end = time.time()
 
             decode_start = time.time()
-            decoded_gen = tokenizer.batch_decode(encoded_gen,
-                                                 skip_special_tokens=True)
+            decoded_gen = tokenizer.batch_decode(
+                encoded_gen,
+                skip_special_tokens=True,
+            )
             maybe_synchronize()
             decode_end = time.time()
-            gen_tokens = torch.sum(encoded_gen != tokenizer.pad_token_id,
-                                   axis=1).numpy(force=True)  # type: ignore
+            gen_tokens = torch.sum(
+                encoded_gen != tokenizer.pad_token_id,
+                axis=1,
+            ).numpy(force=True)  # type: ignore
 
             # Print generations
             delimiter = '#' * 100
             # decode the encoded prompt to handle the case when the tokenizer
             # trims extra spaces or does other pre-tokenization things
-            effective_prompts = tokenizer.batch_decode(encoded_inp['input_ids'],
-                                                       skip_special_tokens=True)
+            effective_prompts = tokenizer.batch_decode(
+                encoded_inp['input_ids'],
+                skip_special_tokens=True,
+            )
             for idx, (effective_prompt, prompt, gen) in enumerate(
-                    zip(effective_prompts, batch, decoded_gen)):
+                zip(effective_prompts, batch, decoded_gen),
+            ):
                 continuation = gen[len(effective_prompt):]
                 print(delimiter)
                 if len(continuation) > 0:
@@ -334,11 +360,13 @@ def main(args: Namespace) -> None:
                 else:
                     print('Warning. No non-special output tokens generated.')
                     print(
-                        'This can happen if the generation only contains padding/eos tokens.'
+                        'This can happen if the generation only contains padding/eos tokens.',
                     )
                     print('Debug:')
                     full_generation = tokenizer.batch_decode(
-                        encoded_gen, skip_special_tokens=False)[idx]
+                        encoded_gen,
+                        skip_special_tokens=False,
+                    )[idx]
                     print('\033[92m' + 'Prompt:\n' + prompt + '\033[0m')
                     print('Full generation:\n' + full_generation)
 
@@ -362,7 +390,7 @@ def main(args: Namespace) -> None:
             print(f'{bs=}, {input_tokens=}, {output_tokens=}')
             print(f'{total_input_tokens=}, {total_output_tokens=}')
             print(
-                f'{encode_latency=:.2f}ms, {gen_latency=:.2f}ms, {decode_latency=:.2f}ms, {total_latency=:.2f}ms'
+                f'{encode_latency=:.2f}ms, {gen_latency=:.2f}ms, {decode_latency=:.2f}ms, {total_latency=:.2f}ms',
             )
             print(f'{latency_per_output_token=:.2f}ms/tok')
             print(f'{output_tok_per_sec=:.2f}tok/sec')

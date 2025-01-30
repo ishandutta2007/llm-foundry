@@ -2,6 +2,7 @@
 my-copy-c4*/
 my-copy-arxiv*/
 *.jsonl*
+!tests/eval/local_data/*.jsonl
 
 # WandB
 wandb/
@@ -150,3 +151,9 @@ dmypy.json
 
 # notebooks
 notebooks/
+
+# artifacts from training
+**/*.pt
+**/mlruns/*
+**/tokenizer-save-dir-*/**
+**/.downloaded_finetuning/

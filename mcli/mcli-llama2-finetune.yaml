@@ -1,15 +1,16 @@
 integrations:
 - integration_type: git_repo
   git_repo: mosaicml/llm-foundry
-  git_branch: v0.3.0
+  git_branch: v0.16.0
   # git_commit: # OR use your commit hash
-  pip_install: -e .[gpu]
-  ssh_clone: false # Should be true if using a private repo
+  pip_install: .[gpu]
+  ssh_clone: false  # Should be true if using a private repo
 
 command: |
   cd llm-foundry/scripts
+  export HF_HUB_ENABLE_HF_TRANSFER=1
   composer train/train.py /mnt/config/parameters.yaml
-image: mosaicml/llm-foundry:1.13.1_cu117-latest
+image: mosaicml/llm-foundry:2.5.1_cu124-latest
 name: llama2-finetune
 
 compute:
@@ -21,12 +22,15 @@ compute:
 
 # The below is injected as a YAML file: /mnt/config/parameters.yaml
 parameters:
-  tokenizer_name: meta-llama/Llama-2-7b-hf
-  max_seq_len: 4096
-  global_seed: 17
+  variables:
+    tokenizer_name: meta-llama/Llama-2-7b-hf
+    global_seed: 17
+    max_seq_len: 4096
+
+  max_seq_len: ${variables.max_seq_len}
 
   # Run Name
-  run_name: # If left blank, will be read from env var $RUN_NAME
+  run_name:  # If left blank, will be read from env var $RUN_NAME
 
   max_split_size_mb: 512
 
@@ -36,15 +40,15 @@ parameters:
     init_device: mixed
     pretrained_model_name_or_path: meta-llama/Llama-2-7b-hf
     pretrained: true
-    # Note: you must have set the HUGGING_FACE_HUB_TOKEN environment variable and have access to the llama2 models
+    # Note: you must have set the HF_TOKEN environment variable and have access to the llama2 models
     use_auth_token: true
-    attention_patch_type: triton
+    use_flash_attention_2: true
 
   # Tokenizer
   tokenizer:
-    name: ${tokenizer_name}
+    name: ${variables.tokenizer_name}
     kwargs:
-      model_max_length: ${max_seq_len}
+      model_max_length: ${variables.max_seq_len}
 
   # Dataloaders
   train_loader:
@@ -52,14 +56,17 @@ parameters:
     dataset:
       hf_name: mosaicml/dolly_hhrlhf
       split: train
-      max_seq_len: ${max_seq_len}
+      max_seq_len: ${variables.max_seq_len}
       allow_pad_trimming: false
       decoder_only_format: true
       shuffle: true
-      # # Use `python llmfoundry/data/packing.py --yaml-path /path/to/this/yaml/ ...`
+      # # Use packing_ratio: 'auto' to automatically profile and select the highest observed packing ratio with
+      # # zero waste. In practice, this may result in > 0 waste because profiling is done on only a portion
+      # # of the dataset.
+      # # Or use `python llmfoundry/scripts/misc/profile_packing.py --yaml-path /path/to/this/yaml/ ...`
       # # to profile this run's optimal packing_ratio as it depends on GPU count,
       # # batch size, sequence length
-      # packing_ratio:
+      # packing_ratio: auto
     drop_last: true
     num_workers: 8
     pin_memory: false
@@ -72,7 +79,7 @@ parameters:
     dataset:
       hf_name: mosaicml/dolly_hhrlhf
       split: test
-      max_seq_len: ${max_seq_len}
+      max_seq_len: ${variables.max_seq_len}
       allow_pad_trimming: false
       decoder_only_format: true
       # packing_ratio:
@@ -111,7 +118,7 @@ parameters:
   global_train_batch_size: 64
 
   # System
-  seed: ${global_seed}
+  seed: ${variables.global_seed}
   device_eval_batch_size: 8
   device_train_microbatch_size: auto
   precision: amp_bf16
@@ -124,7 +131,6 @@ parameters:
     activation_checkpointing_reentrant: false
     activation_cpu_offload: false
     limit_all_gathers: true
-    verbose: false
 
   # Logging
   progress_bar: false
@@ -137,6 +143,8 @@ parameters:
     lr_monitor: {}
     memory_monitor: {}
     runtime_estimator: {}
+
+  load_weights_only: true  # Only load the weights, not the optimizer state, LR schedule, etc
 
 #   loggers:
 #     wandb: {}

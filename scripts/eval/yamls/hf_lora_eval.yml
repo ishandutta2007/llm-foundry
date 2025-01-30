@@ -1,43 +1,27 @@
-max_seq_len: 2048
+variables:
+  model_name_or_path: facebook/opt-350m
+  # If you are using a seperated lora weight, put it here:
+  # lora weights must be compatible with the specified model
+  lora_id_or_path: ybelkada/opt-350m-lora  # Example lora weights for opt-350m
+  max_seq_len: 2048
+
 seed: 1
 precision: amp_fp16
-
-# If you are using one model, put it here:
-model_name_or_path: EleutherAI/gpt-neo-125m
-# If you are using a seperated lora weight, put it here:
-# lora weights must be compatible with the specified model
-lora_id_or_path: edbeeching/gpt-neo-125M-imdb-lora # Example lora weights for gpt-neo-125m
-
-# otherwise, write a block for each model you want to test in the `models` section
+max_seq_len: ${variables.max_seq_len}
 
 models:
 -
-  model_name: ${model_name_or_path}
+  model_name: ${variables.model_name_or_path}
   model:
     name: hf_causal_lm
-    pretrained_model_name_or_path: ${model_name_or_path}
+    pretrained_model_name_or_path: ${variables.model_name_or_path}
     init_device: mixed
     pretrained: true
-    pretrained_lora_id_or_path: ${lora_id_or_path}
+    pretrained_lora_id_or_path: ${variables.lora_id_or_path}
   tokenizer:
-    name: ${model_name_or_path}
+    name: ${variables.model_name_or_path}
     kwargs:
-      model_max_length: ${max_seq_len}
-# # if you are evaluating more than one model, list them all as YAML blocks without variable interpolation
-# -
-#   model_name: mosaicml/mpt-7b
-#   model:
-#     name: hf_causal_lm
-#     pretrained_model_name_or_path: mosaicml/mpt-7b
-#     init_device: cpu
-#     pretrained: true
-#     config_overrides:
-#       max_seq_len: ${max_seq_len}
-#   tokenizer:
-#     name: mosaicml/mpt-7b
-#     kwargs:
-#       model_max_length: ${max_seq_len}
-
+      model_max_length: ${variables.max_seq_len}
 
 device_eval_batch_size: 4
 
@@ -46,5 +30,5 @@ fsdp_config:
   sharding_strategy: FULL_SHARD
   mixed_precision: FULL
 
-icl_tasks: 'eval/yamls/tasks_light.yaml'
-eval_gauntlet: 'eval/yamls/eval_gauntlet.yaml'
+icl_tasks: "eval/yamls/tasks_v0.2.yaml"
+eval_gauntlet: "eval/yamls/eval_gauntlet_v0.2.yaml"

@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-    - 'v*'
+    - "v*"
   workflow_dispatch:
 
 jobs:
@@ -14,7 +14,7 @@ jobs:
     name: Build and Publish llm-foundry PyPI Package
     needs:
     - code-quality
-    runs-on: ubuntu-latest
+    runs-on: linux-ubuntu-latest
     steps:
     - name: Checkout source
       uses: actions/checkout@v3
@@ -22,7 +22,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v3
       with:
-        python-version: '3.9'
+        python-version: "3.9"
 
     - name: Build source and wheel distributions
       run: |
@@ -31,14 +31,6 @@ jobs:
         else
           PYPI_PACKAGE_NAME="llm-foundry-test-$(date +%Y%m%d%H%M%S)"
         fi
-
-        # Remove the peft, xentropy-cuda-lib and triton-pre-mlir dependencies as PyPI does not
-        # support direct installs. The error message for importing PEFT, FusedCrossEntropy,
-        # and flash_attn_triton gives instructions on how to install if a user tries to use it
-        # without this dependency.
-        sed '/xentropy-cuda-lib@git+https:\/\/github.com\/HazyResearch\/flash-attention.git@.*/d' -i setup.py
-        sed '/triton-pre-mlir@git+https:\/\/github.com\/vchiley\/triton.git@.*/d' -i setup.py
-        sed '/peft@git+https:\/\/github.com\/huggingface\/peft.git.*/d' -i setup.py
 
         python -m pip install --upgrade build twine
         python -m build
@@ -58,3 +50,65 @@ jobs:
         user: __token__
         password: ${{ secrets.TEST_PYPI_API_TOKEN }}
         repository_url: https://test.pypi.org/legacy/
+
+  build-docker:
+    name: Build llm-foundry Release Docker Image
+    needs:
+    - code-quality
+    runs-on: mosaic-8wide
+    if: github.repository_owner == 'mosaicml'
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v3
+
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Login to DockerHub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_HUB_USERNAME }}
+        password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+
+    - name: Define Docker tags
+      id: define-tags
+      run: |
+        BRANCH_NAME="${{ github.ref_name }}"
+        TAG_NAME=$(echo "${BRANCH_NAME}" | sed 's/\//_/g')
+        echo "BRANCH_NAME=${BRANCH_NAME}" >> $GITHUB_ENV
+
+        echo "DOCKER_TAG=mosaicml/llm-foundry:release_${TAG_NAME}" >> $GITHUB_ENV
+        echo "AWS_DOCKER_TAG=mosaicml/llm-foundry:release_${TAG_NAME}_aws" >> $GITHUB_ENV
+        echo "LATEST_TAG=mosaicml/llm-foundry:release-latest" >> $GITHUB_ENV
+        echo "AWS_LATEST_TAG=mosaicml/llm-foundry:release_aws-latest" >> $GITHUB_ENV
+
+
+    - name: Build and push AWS Docker image
+      uses: docker/build-push-action@v3
+      with:
+        context: .
+        file: Dockerfile
+        push: true
+        tags: |
+          ${{ env.AWS_DOCKER_TAG }}
+          ${{ env.AWS_LATEST_TAG }}
+        build-args: |
+          BASE_IMAGE=mosaicml/pytorch:2.5.1_cu124-python3.11-ubuntu22.04-aws
+          BRANCH_NAME=${{ env.BRANCH_NAME }}
+          DEP_GROUPS=[all]
+          KEEP_FOUNDRY=true
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v3
+      with:
+        context: .
+        file: Dockerfile
+        push: true
+        tags: |
+          ${{ env.DOCKER_TAG }}
+          ${{ env.LATEST_TAG }}
+        build-args: |
+          BASE_IMAGE=mosaicml/pytorch:2.5.1_cu124-python3.11-ubuntu22.04
+          BRANCH_NAME=${{ env.BRANCH_NAME }}
+          DEP_GROUPS=[all]
+          KEEP_FOUNDRY=true
