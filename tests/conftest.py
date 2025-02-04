@@ -1,12 +1,10 @@
 # Copyright 2022 MosaicML LLM Foundry authors
 # SPDX-License-Identifier: Apache-2.0
 
-import gc
 import os
-from typing import List, Optional
+from typing import Optional
 
 import pytest
-import torch
 from composer.utils import reproducibility
 
 # Allowed options for pytest.mark.world_size()
@@ -18,11 +16,20 @@ WORLD_SIZE_OPTIONS = (1, 2)
 # Enforce deterministic mode before any tests start.
 reproducibility.configure_deterministic_mode()
 
+# Add the path of any pytest fixture files you want to make global
+pytest_plugins = [
+    'tests.fixtures.autouse',
+    'tests.fixtures.models',
+    'tests.fixtures.data',
+]
 
-def _add_option(parser: pytest.Parser,
-                name: str,
-                help: str,
-                choices: Optional[List[str]] = None):
+
+def _add_option(
+    parser: pytest.Parser,
+    name: str,
+    help: str,
+    choices: Optional[list[str]] = None,
+):
     parser.addoption(
         f'--{name}',
         default=None,
@@ -39,11 +46,13 @@ def _add_option(parser: pytest.Parser,
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    _add_option(parser,
-                'seed',
-                help="""\
+    _add_option(
+        parser,
+        'seed',
+        help="""\
         Rank zero seed to use. `reproducibility.seed_all(seed + dist.get_global_rank())` will be invoked
-        before each test.""")
+        before each test.""",
+    )
 
 
 def _get_world_size(item: pytest.Item):
@@ -52,8 +61,10 @@ def _get_world_size(item: pytest.Item):
     return item.get_closest_marker('world_size', default=_default).args[0]
 
 
-def pytest_collection_modifyitems(config: pytest.Config,
-                                  items: List[pytest.Item]) -> None:
+def pytest_collection_modifyitems(
+    config: pytest.Config,
+    items: list[pytest.Item],
+) -> None:
     """Filter tests by world_size (for multi-GPU tests)"""
     world_size = int(os.environ.get('WORLD_SIZE', '1'))
 
@@ -65,7 +76,7 @@ def pytest_collection_modifyitems(config: pytest.Config,
     remaining = []
     deselected = []
     for item in items:
-        if all([condition(item) for condition in conditions]):
+        if all(condition(item) for condition in conditions):
             remaining.append(item)
         else:
             deselected.append(item)
@@ -78,12 +89,3 @@ def pytest_collection_modifyitems(config: pytest.Config,
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int):
     if exitstatus == 5:
         session.exitstatus = 0  # Ignore no-test-ran errors
-
-
-@pytest.fixture(autouse=True)
-def clear_cuda_cache(request: pytest.FixtureRequest):
-    """Clear memory between GPU tests."""
-    marker = request.node.get_closest_marker('gpu')
-    if marker is not None and torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        gc.collect()  # Only gc on GPU tests as it 2x slows down CPU tests

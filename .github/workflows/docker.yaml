@@ -7,37 +7,23 @@ on:
     branches:
     - main
     paths:
-    - ./Dockerfile
+    - Dockerfile
     - .github/workflows/docker.yaml
   workflow_dispatch: {}
 jobs:
   docker-build:
-    runs-on: ubuntu-latest
+    runs-on: mosaic-8wide
     if: github.repository_owner == 'mosaicml'
     strategy:
       matrix:
         include:
-        - name: '1.13.1_cu117'
-          base_image: mosaicml/pytorch:1.13.1_cu117-python3.10-ubuntu20.04
-          dep_groups: '[gpu]'
-        - name: '2.0.1_cu118'
-          base_image: mosaicml/pytorch:2.0.1_cu118-python3.10-ubuntu20.04
-          dep_groups: '[gpu]'
-        - name: '2.1.0_cu121'
-          base_image: mosaicml/pytorch:2.1.0_cu121-python3.10-ubuntu20.04
-          dep_groups: '[gpu]'
-        - name: '2.1.0_cu121_flash2'
-          base_image: mosaicml/pytorch:2.1.0_cu121-python3.10-ubuntu20.04
-          dep_groups: '[gpu-flash2]'
-
+        - name: "2.5.1_cu124"
+          base_image: mosaicml/pytorch:2.5.1_cu124-python3.11-ubuntu22.04
+          dep_groups: "[all]"
+        - name: "2.5.1_cu124_aws"
+          base_image: mosaicml/pytorch:2.5.1_cu124-python3.11-ubuntu22.04-aws
+          dep_groups: "[all]"
     steps:
-    - name: Maximize Build Space on Worker
-      uses: easimon/maximize-build-space@v4
-      with:
-        overprovision-lvm: true
-        remove-dotnet: true
-        remove-android: true
-        remove-haskell: true
 
     - name: Checkout
       uses: actions/checkout@v3
@@ -54,6 +40,13 @@ jobs:
         username: ${{ secrets.DOCKER_HUB_USERNAME }}
         password: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
+    - name: Login to GHCR
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.GHCR_USERNAME }}
+        password: ${{ secrets.GHCR_TOKEN }}
+        registry: ghcr.io
+
     - name: Calculate Docker Image Variables
       run: |
         set -euxo pipefail
@@ -64,19 +57,21 @@ jobs:
         GIT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
         echo "IMAGE_TAG=${GIT_SHA}" >> ${GITHUB_ENV}
 
-        if [ "${{ github.event_name }}" == "push" ]; then
-          echo "Triggered by push event."
-          PROD_REPO="mosaicml/llm-foundry"
-          IMAGE_TAG="${PROD_REPO}:${{matrix.name}}-${GIT_SHA},${PROD_REPO}:${{matrix.name}}-latest"
-          IMAGE_CACHE="${PROD_REPO}:${{matrix.name}}-buildcache"
-        elif [ "${{ github.event_name }}" == "pull_request" ]; then
+        if [ "${{ github.event_name }}" == "pull_request" ]; then
           echo "Triggered by pull_request event."
           STAGING_REPO="mosaicml/ci-staging"
-          IMAGE_TAG="${STAGING_REPO}:${{matrix.name}}-${GIT_SHA}"
+          GHCR_STAGING_REPO="ghcr.io/databricks-mosaic/ci-staging"
+          GHCR_IMAGE_TAG="${GHCR_STAGING_REPO}:${{matrix.name}}-${GIT_SHA}"
+          IMAGE_TAG="${STAGING_REPO}:${{matrix.name}}-${GIT_SHA},${GHCR_IMAGE_TAG}"
           IMAGE_CACHE="${STAGING_REPO}:${{matrix.name}}-buildcache"
         else
-          echo "Triggered by unknown event: ${{ github.event_name }}"
-          exit 1
+          # Triggered by push or workflow_dispatch event
+          echo "Triggered by ${{ github.event_name }} event, releasing to prod"
+          PROD_REPO="mosaicml/llm-foundry"
+          GHCR_PROD_REPO="ghcr.io/databricks-mosaic/llm-foundry"
+          GHCR_IMAGE_TAG="${GHCR_PROD_REPO}:${{matrix.name}}-${GIT_SHA},${GHCR_PROD_REPO}:${{matrix.name}}-latest"
+          IMAGE_TAG="${PROD_REPO}:${{matrix.name}}-${GIT_SHA},${PROD_REPO}:${{matrix.name}}-latest,${GHCR_IMAGE_TAG}"
+          IMAGE_CACHE="${PROD_REPO}:${{matrix.name}}-buildcache"
         fi
 
         echo "IMAGE_TAG=${IMAGE_TAG}" >> ${GITHUB_ENV}
@@ -91,5 +86,6 @@ jobs:
         cache-from: type=registry,ref=${{ env.IMAGE_CACHE }}
         cache-to: type=registry,ref=${{ env.IMAGE_CACHE }},mode=max
         build-args: |
+          BRANCH_NAME=${{ github.head_ref || github.ref_name }}
           BASE_IMAGE=${{ matrix.base_image }}
           DEP_GROUPS=${{ matrix.dep_groups }}

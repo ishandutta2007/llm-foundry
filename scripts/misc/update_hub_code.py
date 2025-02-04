@@ -5,7 +5,6 @@ import argparse
 import os
 import tempfile
 from datetime import datetime
-from typing import List
 
 import torch
 import transformers
@@ -28,7 +27,7 @@ _ALL_MODELS = [
 ]
 
 
-def main(hf_repos_for_upload: List[str]):
+def main(hf_repos_for_upload: list[str]):
     if len(hf_repos_for_upload) == 1 and hf_repos_for_upload[0] == 'all':
         hf_repos_for_upload = _ALL_MODELS
 
@@ -56,14 +55,22 @@ def main(hf_repos_for_upload: List[str]):
         for repo in hf_repos_for_upload:
             print(f'Testing code changes for {repo}')
             pr_model = transformers.AutoModelForCausalLM.from_pretrained(
-                original_save_dir, trust_remote_code=True, device_map='auto')
+                original_save_dir,
+                trust_remote_code=True,
+                device_map='auto',
+            )
             pr_tokenizer = transformers.AutoTokenizer.from_pretrained(
-                repo, trust_remote_code=True)
+                repo,
+                trust_remote_code=True,
+            )
 
-            generation = pr_model.generate(pr_tokenizer(
-                'MosaicML is', return_tensors='pt').input_ids.to(
-                    'cuda' if torch.cuda.is_available() else 'cpu'),
-                                           max_new_tokens=2)
+            generation = pr_model.generate(
+                pr_tokenizer(
+                    'MosaicML is',
+                    return_tensors='pt',
+                ).input_ids.to('cuda' if torch.cuda.is_available() else 'cpu'),
+                max_new_tokens=2,
+            )
             _ = pr_tokenizer.batch_decode(generation)
 
             print(f'Opening PR against {repo}')
@@ -83,12 +90,14 @@ def main(hf_repos_for_upload: List[str]):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description=
-        'Update MPT code in HuggingFace Hub repos to be in sync with the local codebase'
+        'Update MPT code in HuggingFace Hub repos to be in sync with the local codebase',
     )
-    parser.add_argument('--hf_repos_for_upload',
-                        help='List of repos to open PRs against',
-                        nargs='+',
-                        required=True)
+    parser.add_argument(
+        '--hf_repos_for_upload',
+        help='List of repos to open PRs against',
+        nargs='+',
+        required=True,
+    )
 
     args = parser.parse_args()
 

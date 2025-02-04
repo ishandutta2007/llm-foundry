@@ -1,19 +1,24 @@
-max_seq_len: 1024
-global_seed: 17
-model_name: t5-small
+variables:
+  global_seed: 17
+  model_name: t5-small
 
-# Run Name
-run_name: # If left blank, will be read from env var $RUN_NAME
+  max_seq_len: 1024
+
+  # Run Name
+  run_name:  # If left blank, will be read from env var $RUN_NAME
+
+max_seq_len: ${variables.max_seq_len}
+run_name: ${variables.run_name}
 
 # Model
 model:
   name: hf_t5
-  pretrained_model_name_or_path: ${model_name}
+  pretrained_model_name_or_path: ${variables.model_name}
   pretrained: true
 
 # Tokenizer
 tokenizer:
-  name: ${model_name}
+  name: ${variables.model_name}
 
 # Dataloaders
 train_loader:
@@ -21,7 +26,7 @@ train_loader:
   dataset:
     hf_name: HuggingFaceH4/databricks_dolly_15k
     split: train
-    max_seq_len: ${max_seq_len}
+    max_seq_len: ${variables.max_seq_len}
     allow_pad_trimming: false
     decoder_only_format: false
     shuffle: true
@@ -36,7 +41,7 @@ train_loader:
 
 # Optimization
 scheduler:
-  name: linear_decay_with_warmup # linear no warmup is HF default which dolly used
+  name: linear_decay_with_warmup  # linear no warmup is HF default which dolly used
   t_warmup: 0ba
   alpha_f: 0
 
@@ -56,13 +61,13 @@ algorithms:
     clipping_threshold: 1.0
 
 max_duration: 1ep
-eval_interval: 1 # this is the only allowed value for no eval
+eval_interval: 1  # this is the only allowed value for no eval
 # eval_first: false
 # eval_subset_num_batches: -1
-global_train_batch_size: 64 # assuming 8 gpus
+global_train_batch_size: 64  # assuming 8 gpus
 
 # System
-seed: ${global_seed}
+seed: ${variables.global_seed}
 device_eval_batch_size: 8
 device_train_microbatch_size: 8
 # device_train_microbatch_size: auto
@@ -76,7 +81,6 @@ fsdp_config:
   activation_checkpointing_reentrant: false
   activation_cpu_offload: false
   limit_all_gathers: true
-  verbose: false
 
 # Logging
 progress_bar: false
@@ -102,3 +106,4 @@ callbacks:
 # Load from remote object store
 # REPLACE THE BELOW with you own checkpoint!
 # load_path: oci://my-bucket/my-folder/checkpoints/some_checkpoint.pt
+load_weights_only: true  # Only load the weights, not the optimizer state, LR schedule, etc

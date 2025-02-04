@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
-from typing import List
 
 from composer.core import Callback, State
 from composer.loggers import Logger
+
+from llmfoundry.utils.warnings import experimental_class
 
 __all__ = [
     'GlobalLRScaling',
@@ -15,6 +16,7 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 
+@experimental_class('GlobalLRScaling')
 class GlobalLRScaling(Callback):
     """GlobalLRScaling.
 
@@ -44,7 +46,8 @@ class GlobalLRScaling(Callback):
                 if 'initial_lr' in group:
                     group['initial_lr'] *= self.lr_scale
                 log.info(
-                    f"Set LR and WD to {group['lr']}, {group['weight_decay']}")
+                    f"Set LR and WD to {group['lr']}, {group['weight_decay']}",
+                )
 
         for scheduler in state.schedulers:
             scheduler.base_lrs = [
@@ -52,6 +55,7 @@ class GlobalLRScaling(Callback):
             ]
 
 
+@experimental_class('LayerFreezing')
 class LayerFreezing(Callback):
     """LayerFreezing.
 
@@ -64,17 +68,17 @@ class LayerFreezing(Callback):
         layer_names (float): Names of layers to freeze.
     """
 
-    def __init__(self, layer_names: List[str]):
+    def __init__(self, layer_names: list[str]):
         self.layer_names = set(layer_names)
 
     def fit_start(self, state: State, logger: Logger) -> None:
         del logger  # unused
 
-        model_layers = set(name for name, _ in state.model.named_parameters())
+        model_layers = {name for name, _ in state.model.named_parameters()}
         for layer in self.layer_names:
             if layer not in model_layers:
                 raise Exception(
-                    f'Attempted to freeze layer not found in model: {layer}\nAvailable layers: {model_layers}'
+                    f'Attempted to freeze layer not found in model: {layer}\nAvailable layers: {model_layers}',
                 )
 
         successful_freeze = False
@@ -86,4 +90,5 @@ class LayerFreezing(Callback):
 
         if not successful_freeze:
             raise Exception(
-                f"Tried to run LayerFreezing but didn't freeze any layers")
+                f"Tried to run LayerFreezing but didn't freeze any layers",
+            )

@@ -3,10 +3,18 @@
 
 import json
 import os
+import tempfile
 from glob import glob
-from typing import List, Optional
+from typing import Optional
 
 from composer.utils import ObjectStore
+from composer.utils.object_store import ObjectStoreTransientError
+from composer.utils.retrying import retry
+
+__all__ = [
+    'merge_shard_groups',
+    'DownloadingIterable',
+]
 
 
 def with_id(basename: str, shard_id: int) -> str:
@@ -73,22 +81,42 @@ def merge_shard_groups(root: str) -> None:
         out.write(text)
 
 
+@retry(ObjectStoreTransientError, num_attempts=5)
+def download_file(
+    object_store: ObjectStore,
+    object_name: str,
+    output_filename: str,
+) -> None:
+    """Downloads a file from an object store.
+
+    Args:
+        object_store (ObjectStore): Object store to download from
+        object_name (str): Name of object to download
+        output_filename (str): Local filename to write to
+    """
+    object_store.download_object(
+        object_name=object_name,
+        filename=output_filename,
+        overwrite=True,
+    )
+
+
 class DownloadingIterable:
 
     def __init__(
         self,
-        object_names: List[str],
-        output_folder: str,
+        object_names: list[str],
+        output_folder: Optional[str],
         object_store: Optional[ObjectStore],
     ):
-        """Iterable that downloads files from an object store before yielding.
+        """Iterable that downloads files before yielding the local filename.
 
         If object_store is None, input_folder_prefix is treated as a local path.
 
         Args:
             object_names (List[str]): Names of objects to download
-            output_folder (str): Local folder to write downloaded files to
-            object_store (Optiona[ObjectStore]): Object store to download from
+            output_folder (Optional[str]): Local folder to write downloaded files to. If none, uses a temporary folder.
+            object_store (Optional[ObjectStore]): Object store to download from
         """
         self.object_names = object_names
         self.object_store = object_store
@@ -96,16 +124,20 @@ class DownloadingIterable:
 
     def __iter__(self):
         for object_name in self.object_names:
-            object_name = object_name.strip('/')
-            output_filename = os.path.join(self.output_folder, object_name)
-            if self.object_store is not None:
-                self.object_store.download_object(object_name=object_name,
-                                                  filename=output_filename,
-                                                  overwrite=True)
-            else:
-                # Inputs are local so we do not need to download them.
-                output_filename = object_name
+            # Default output_filename, used for local paths.
+            output_filename = object_name
 
-            with open(output_filename) as _txt_file:
-                txt = _txt_file.read()
-            yield {'text': txt}
+            # Download objects if remote path.
+            if self.object_store is not None:
+                output_filename = os.path.join(
+                    self.output_folder,
+                    object_name.strip('/'),
+                ) if self.output_folder is not None else tempfile.NamedTemporaryFile(
+                ).name
+
+                download_file(
+                    object_store=self.object_store,
+                    object_name=object_name,
+                    output_filename=output_filename,
+                )
+            yield output_filename

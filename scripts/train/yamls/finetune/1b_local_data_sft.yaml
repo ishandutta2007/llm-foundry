@@ -4,11 +4,14 @@
 # This is not the right YAML if you are trying to finetune a HuggingFace pretrained model. #
 ############################################################################################
 
-max_seq_len: 2048
-global_seed: 17
+variables:
+  global_seed: 17
+  max_seq_len: 2048
+
+max_seq_len: ${variables.max_seq_len}
 
 # Run Name
-run_name: # If left blank, will be read from env var $RUN_NAME
+run_name:  # If left blank, will be read from env var $RUN_NAME
 
 # Model
 # These must match pretraining
@@ -16,13 +19,13 @@ model:
   name: mpt_causal_lm
   init_device: meta
   d_model: 2048
-  n_heads: 16 # Modified 24->16 so that d_head == 128 to statisfy FlashAttention
+  n_heads: 16  # Modified 24->16 so that d_head == 128 to satisfy FlashAttention
   n_layers: 24
   expansion_ratio: 4
-  max_seq_len: ${max_seq_len}
+  max_seq_len: ${variables.max_seq_len}
   vocab_size: 50368
   attn_config:
-    attn_impl: triton
+    attn_impl: flash
     # Set this to `true` if using `train_loader.dataset.packing_ratio` below
     attn_uses_sequence_id: false
 
@@ -30,7 +33,7 @@ model:
 tokenizer:
   name: EleutherAI/gpt-neox-20b
   kwargs:
-    model_max_length: ${max_seq_len}
+    model_max_length: ${variables.max_seq_len}
 
 # Local data to load into huggingface datasets
 dataset: &hf_dataset
@@ -45,11 +48,14 @@ train_loader: &train_loader
   dataset:
     <<: *hf_dataset
     split: train
-    max_seq_len: ${max_seq_len}
+    max_seq_len: ${variables.max_seq_len}
     allow_pad_trimming: false
     decoder_only_format: true
     shuffle: true
-    # # Use `python llmfoundry/data/packing.py --yaml-path /path/to/this/yaml/ ...`
+    # # Use packing_ratio: 'auto' to automatically profile and select the highest observed packing ratio with
+    # # zero waste. In practice, this may result in > 0 waste because profiling is done on only a portion
+    # # of the dataset.
+    # # Or use `python llmfoundry/scripts/misc/profile_packing.py --yaml-path /path/to/this/yaml/ ...`
     # # to profile this run's optimal packing_ratio as it depends on GPU count,
     # # batch size, sequence length
     # packing_ratio:
@@ -68,7 +74,7 @@ eval_loader:
 
 # Optimization
 scheduler:
-  name: linear_decay_with_warmup # linear no warmup is HF default which dolly used
+  name: linear_decay_with_warmup  # linear no warmup is HF default which dolly used
   t_warmup: 0ba
   alpha_f: 0
 
@@ -94,7 +100,7 @@ eval_subset_num_batches: -1
 global_train_batch_size: 128
 
 # System
-seed: ${global_seed}
+seed: ${variables.global_seed}
 device_eval_batch_size: 4
 device_train_microbatch_size: 4
 # device_train_microbatch_size: auto
@@ -108,7 +114,6 @@ fsdp_config:
   activation_checkpointing_reentrant: false
   activation_cpu_offload: false
   limit_all_gathers: true
-  verbose: false
 
 # Logging
 progress_bar: false
@@ -134,3 +139,4 @@ callbacks:
 # Load from remote object store
 # REPLACE THE BELOW with you own checkpoint!
 load_path: oci://my-bucket/my-folder/mpt-1b/checkpoints/some_checkpoint.pt
+load_weights_only: true  # Only load the weights, not the optimizer state, LR schedule, etc
